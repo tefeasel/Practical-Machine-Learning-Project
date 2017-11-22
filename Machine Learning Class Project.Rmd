@@ -1,0 +1,77 @@
+Reproducible Research Project 1
+===============================
+
+#Loading and preprocessing data
+The first step I take is to load the training and test data sets. Looking into the data, it is apparent there are 160 variables and 19,622 observations. A quick look indicates we may not need all of the variables as we are only interested in belt, forearm, arm, and dumbell measures. Furthermore, a number of variables have a large portion of NA values, making them either candiates for imputing or deleting them altogether. 
+```{r}
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(corrplot)
+download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+              destfile = "ml_train.csv")
+download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+              destfile = "ml_test.csv")
+train <- read.csv("ml_train.csv", na.strings = "NA")
+test <- read.csv("ml_test.csv", na.strings = "NA")
+dim(train)
+str(train)
+summary(train)
+```
+Given the above, I decided to only keep the variables with the words belt, arm, and dumbell, along with classe (the target variable). Furthermore, given the sheer number of missing values in some of the columns, e.g., avg_pitch_forearm, I don't feel that imputing the data would necessarily give the best estimates of the vast number of missing samples. As such, I've elected to remove these columns.
+```{r}
+#Only keep columns with belt, forearm, arm, dumbell
+keep <- grepl("belt|arm|dumbell|classe", names(train))
+train <- train[, keep]
+test <- test[, keep]
+
+#Remove columns with NA
+na <- colSums(is.na(test)) == 0
+train <- train[, na]
+test <- test[, na]
+```
+Next, I check for any predictors with near zero variance, since they could be removed as they would not add much, if anything, in terms of predicted power. There were none. 
+
+```{r}
+nzv <- caret::nearZeroVar(train)
+nzv
+
+featurePlot(train[,-40], train[,40])
+corrplot(cor(train[,-40]))
+```
+
+#Modeling & Results
+For the final step, I've elected to train a random forest on all available features, as it typically does well in multi-class classification problems and is rather easy to implement. In addition, with 39 features the ability for the random forest to implicitly do feature selection is useful. 
+
+Before doing this I do a 90/10 split on the training data in order to create a validation set. I used 5-fold cross validation in order to get a better esimate on the model's error rate & accuracy. Next, I also decided to tune the model by testing different values for the number of variables sampled at each split. Overall, I'd anticipate the out of sample error to be 1% or less. 
+```{r}
+set.seed(42)
+index <- createDataPartition(train$classe, p = .9, list = FALSE)
+train2 <- train[index,]
+validate<- train[-index,]
+
+set.seed(42)
+tune <- expand.grid(mtry = c(3, 6, 9, 12))
+control <- trainControl(method = "cv", number = 5)
+model_rf <- train(classe ~ ., data = train2,
+                  method = "rf",
+                  tuneGrid = tune,
+                  trControl = control)
+
+model_rf
+plot(varImp(model_rf))
+```
+
+Overall, 6 features at each split optimized the accuracy of the model, which had an out-of sample error rate of less than 1%.
+
+```{r}
+#COnfusion matrix for the fitted values
+confusionMatrix(predict(model_rf, train), train$classe)
+
+#Confusion matrix for the validation set
+confusionMatrix(predict(model_rf, validate), validate$classe)
+
+#Submission portion
+test_pred <- predict(model_rf, test)
+```
+Finally, the confusion matrix of the fitted values and the actual values shows high sensitivity and specificty in all 5 class. Furthermore, the same is true for the validation set, which achieved 99.8% accuracy. 
